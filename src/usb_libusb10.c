@@ -476,37 +476,35 @@ FN_INTERNAL int fnusb_open_subdevices(freenect_device *dev, int index)
 	if (ctx->enabled_subdevices & FREENECT_DEVICE_MOTOR)
 	{
 		libusb_device* motor = fnusb_find_sibling_device(ctx, camera, devs, count, &fnusb_is_motor);
-		if (motor == NULL) {
-			FN_ERROR("Could not find device sibling\n");
-			res = -1;
-			goto failure;
-		}
+		if (motor != NULL) {
+			struct libusb_device_descriptor desc;
+			res = libusb_get_device_descriptor(motor, &desc);
+			if (res < 0) {
+				FN_ERROR("Could not query device: %s\n", libusb_error_name(res));
+				goto failure;
+			}
 
-		struct libusb_device_descriptor desc;
-		res = libusb_get_device_descriptor(motor, &desc);
-		if (res < 0) {
-			FN_ERROR("Could not query device: %s\n", libusb_error_name(res));
-			goto failure;
-		}
+			res = libusb_open(motor, &dev->usb_motor.dev);
+			if (res < 0 || !dev->usb_motor.dev)
+			{
+				FN_ERROR("Could not open device: %s\n", libusb_error_name(res));
+				dev->usb_motor.dev = NULL;
+				goto failure;
+			}
 
-		res = libusb_open(motor, &dev->usb_motor.dev);
-		if (res < 0 || !dev->usb_motor.dev)
-		{
-			FN_ERROR("Could not open device: %s\n", libusb_error_name(res));
-			dev->usb_motor.dev = NULL;
-			goto failure;
-		}
+			res = libusb_claim_interface(dev->usb_motor.dev, 0);
+			if (res < 0) {
+				FN_ERROR("Could not claim interface: %s\n", libusb_error_name(res));
+				libusb_close(dev->usb_motor.dev);
+				dev->usb_motor.dev = NULL;
+				goto failure;
+			}
 
-		res = libusb_claim_interface(dev->usb_motor.dev, 0);
-		if (res < 0) {
-			FN_ERROR("Could not claim interface: %s\n", libusb_error_name(res));
-			libusb_close(dev->usb_motor.dev);
-			dev->usb_motor.dev = NULL;
-			goto failure;
+			dev->usb_motor.VID = desc.idVendor;
+			dev->usb_motor.PID = desc.idProduct;
+		} else {
+			ctx->enabled_subdevices &= ~FREENECT_DEVICE_MOTOR;
 		}
-
-		dev->usb_motor.VID = desc.idVendor;
-		dev->usb_motor.PID = desc.idProduct;
 	}
     
 	// FIND AUDIO
@@ -514,9 +512,8 @@ FN_INTERNAL int fnusb_open_subdevices(freenect_device *dev, int index)
 	{
 		libusb_device* audio = fnusb_find_sibling_device(ctx, camera, devs, count, &fnusb_is_audio);
 		if (audio == NULL) {
-			FN_ERROR("Could not find device sibling\n");
-			res = -1;
-			goto failure;
+			ctx->enabled_subdevices &= ~FREENECT_DEVICE_AUDIO;
+			goto skip_audio;
 		}
 
 		struct libusb_device_descriptor desc;
@@ -682,6 +679,7 @@ FN_INTERNAL int fnusb_open_subdevices(freenect_device *dev, int index)
 
 			free(audio_serial);
 		}
+		skip_audio:;
 	}
 
 	if ((dev->usb_cam.dev || !(ctx->enabled_subdevices & FREENECT_DEVICE_CAMERA))
